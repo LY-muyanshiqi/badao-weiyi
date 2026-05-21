@@ -51,3 +51,14 @@
 ---
 
 > 用 AI 守护每一座小型水利工程的安全
+
+## 相关项目
+
+| 项目 | 描述 |
+|------|------|
+| [PCCP](https://github.com/LY-muyanshiqi/PCCP) | Inception-ResNet-LSTM · R²=0.986 |
+| [华中杯-VRP](https://github.com/LY-muyanshiqi/huazhong-cup-vrp) | Hybrid-ILS · 278页论文 |
+| [统计建模-玉米](https://github.com/LY-muyanshiqi/statistical-modeling-corn) | LSTM+CNN+XGBoost · R²=0.82 |
+| [蓄能智调](https://github.com/LY-muyanshiqi/pumped-storage-carbon) | LSTM来水预测 · 碳减排优化 |
+| [智慧水利](https://github.com/LY-muyanshiqi/smart-water-demo) | LSTM洪水预测 · Flask+Streamlit |
+| [个人主页](https://github.com/LY-muyanshiqi/LY-muyanshiqi) | GitHub Profile · 项目总览 |
