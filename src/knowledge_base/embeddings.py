@@ -32,13 +32,8 @@ class KnowledgeBase:
 
         try:
             import chromadb
-            from chromadb.config import Settings
 
-            self.client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=str(self.persist_dir),
-                anonymized_telemetry=False,
-            ))
+            self.client = chromadb.PersistentClient(path=str(self.persist_dir))
 
             try:
                 self.collection = self.client.get_collection("hydraulic_knowledge")
