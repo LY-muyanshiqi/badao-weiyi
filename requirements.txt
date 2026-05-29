@@ -1,0 +1,31 @@
+# PCCP-E 环向变形智能预测 — 项目依赖
+# 坝道微医 2.0 — 水利工程多灾害智能诊断系统
+
+# 核心数据处理
+pandas>=1.5.0
+numpy>=1.23.0
+openpyxl>=3.0.0
+scipy>=1.9.0
+
+# 机器学习
+scikit-learn>=1.2.0
+
+# 深度学习
+torch>=1.12.0
+
+# 可视化
+matplotlib>=3.6.0
+seaborn>=0.12.0
+
+# Web应用
+streamlit>=1.25.0
+flask>=2.3.0
+flask-socketio>=5.3.0
+
+# 知识库
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+
+# 工具
+tqdm>=4.64.0
+joblib>=1.2.0
