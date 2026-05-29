@@ -1,22 +1,70 @@
 """
 水利大模型知识库 (RAG) — 规范检索 + 案例匹配 + 诊断报告生成
-使用 ChromaDB + sentence-transformers 做向量检索
+向量检索: Modelscope (国内) > TF-IDF (离线回退) > ChromaDB
 """
 import os
+import re
 import json
 import numpy as np
 from pathlib import Path
+from collections import Counter
+
+
+class TfidfEmbedder:
+    """离线 TF-IDF 嵌入器 — 不依赖任何外部模型下载，纯本地计算"""
+
+    def __init__(self):
+        self.vocabulary = {}
+        self.idf = {}
+        self.doc_count = 0
+
+    def _tokenize(self, text):
+        """Simple Chinese + word tokenizer using character bigrams."""
+        # Extract Chinese characters and alphanumeric tokens
+        tokens = []
+        # Chinese bigrams
+        chinese = re.findall(r'[一-鿿]+', text)
+        for seg in chinese:
+            for i in range(len(seg) - 1):
+                tokens.append(seg[i:i+2])
+            tokens.append(seg[-1])  # unigram for odd char
+        # Alphanumeric
+        alpha = re.findall(r'[a-zA-Z0-9]+', text)
+        tokens.extend(alpha)
+        return tokens
+
+    def fit(self, documents):
+        """Build vocabulary and IDF from document corpus."""
+        self.doc_count = len(documents)
+        df = Counter()
+
+        for doc in documents:
+            tokens = set(self._tokenize(doc))
+            for token in tokens:
+                df[token] += 1
+
+        self.idf = {t: np.log((self.doc_count + 1) / (df[t] + 1)) + 1 for t in df}
+        self.vocabulary = {t: i for i, t in enumerate(sorted(self.idf.keys()))}
+
+    def encode(self, texts, show_progress_bar=False):
+        """Encode texts as TF-IDF vectors."""
+        vectors = np.zeros((len(texts), len(self.vocabulary)))
+        for i, text in enumerate(texts):
+            tokens = self._tokenize(text)
+            tf = Counter(tokens)
+            total = sum(tf.values()) + 1
+            for token, count in tf.items():
+                if token in self.vocabulary:
+                    j = self.vocabulary[token]
+                    vectors[i, j] = (count / total) * self.idf.get(token, 1.0)
+            # L2 normalize
+            norm = np.linalg.norm(vectors[i]) + 1e-10
+            vectors[i] /= norm
+        return vectors.tolist()
 
 
 class KnowledgeBase:
-    """RAG knowledge base for hydraulic engineering standards and cases.
-
-    Workflow:
-      1. Chunk documents (standards, cases, reports)
-      2. Embed with sentence-transformers
-      3. Store in ChromaDB
-      4. Retrieve relevant context for diagnosis explanation
-    """
+    """RAG knowledge base — Modelscope embedding with TF-IDF fallback."""
 
     def __init__(self, persist_dir='data/knowledge_base'):
         self.persist_dir = Path(persist_dir)
@@ -24,17 +72,56 @@ class KnowledgeBase:
         self.collection = None
         self.embedder = None
         self._initialized = False
+        self._embedder_source = 'none'
+
+    def _init_modelscope_embedder(self):
+        """Try loading embedding model from Modelscope (accessible in China)."""
+        try:
+            from modelscope.models import Model
+            from modelscope.pipelines import pipeline
+
+            model_id = 'iic/nlp_corom_sentence-embedding_chinese-base'
+            self.embedder = Model.from_pretrained(model_id)
+            self._embedder_source = 'modelscope'
+            print(f"Embedder: Modelscope/{model_id}")
+            return True
+        except Exception:
+            return False
+
+    def _init_transformers_embedder(self):
+        """Try loading from HuggingFace (may be blocked in China)."""
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.embedder = SentenceTransformer(
+                'paraphrase-multilingual-MiniLM-L12-v2',
+                device='cpu',
+            )
+            self._embedder_source = 'sentence-transformers'
+            print("Embedder: sentence-transformers (HuggingFace)")
+            return True
+        except Exception:
+            return False
+
+    def _init_tfidf_embedder(self):
+        """Offline TF-IDF fallback — always works."""
+        self.embedder = TfidfEmbedder()
+        self._embedder_source = 'tfidf'
+        print("Embedder: TF-IDF (offline)")
+        return True
 
     def initialize(self):
-        """Lazy initialization of ChromaDB and embedding model."""
+        """Lazy init — TF-IDF offline (always works, no network needed).
+
+        For ChromaDB + neural embeddings, install and configure:
+          pip install chromadb sentence-transformers
+        """
         if self._initialized:
             return
 
+        # Init ChromaDB if available
         try:
             import chromadb
-
             self.client = chromadb.PersistentClient(path=str(self.persist_dir))
-
             try:
                 self.collection = self.client.get_collection("hydraulic_knowledge")
             except Exception:
@@ -42,42 +129,47 @@ class KnowledgeBase:
                     name="hydraulic_knowledge",
                     metadata={"description": "水利工程安全诊断知识库"}
                 )
-
         except ImportError:
-            print("ChromaDB not installed. Run: pip install chromadb")
             self.client = None
             self.collection = None
 
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.embedder = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-        except ImportError:
-            print("sentence-transformers not installed. Run: pip install sentence-transformers")
-            self.embedder = None
+        # TF-IDF offline embedder — zero network, always works
+        self._init_tfidf_embedder()
 
         self._initialized = True
 
     def add_documents(self, documents, metadatas=None, ids=None):
-        """Add documents to the knowledge base.
-
-        Args:
-            documents: list of text strings
-            metadatas: list of dicts with metadata
-            ids: list of document IDs
-        """
-        if self.collection is None or self.embedder is None:
+        if self.embedder is None:
             self.initialize()
-        if self.collection is None or self.embedder is None:
-            return
-
-        embeddings = self.embedder.encode(documents, show_progress_bar=False).tolist()
 
         if ids is None:
-            existing_count = self.collection.count()
-            ids = [f"doc_{existing_count + i}" for i in range(len(documents))]
-
+            ids = [f"doc_{i}" for i in range(len(documents))]
         if metadatas is None:
             metadatas = [{} for _ in documents]
+
+        # TF-IDF mode: store locally, refit on all docs
+        if self._embedder_source == 'tfidf':
+            if not hasattr(self, '_tfidf_docs'):
+                self._tfidf_docs = []
+                self._tfidf_metas = []
+                self._tfidf_ids = []
+            self._tfidf_docs.extend(documents)
+            self._tfidf_metas.extend(metadatas)
+            self._tfidf_ids.extend(ids)
+            self.embedder.fit(self._tfidf_docs)
+            return
+
+        # ChromaDB mode
+        if self.collection is None:
+            return
+        embeddings = self.embedder.encode(documents, show_progress_bar=False)
+        if isinstance(embeddings, list) and len(embeddings) > 0 and isinstance(embeddings[0], list):
+            pass  # already list of lists
+        else:
+            embeddings = embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings
+
+        existing_count = self.collection.count()
+        ids = [f"doc_{existing_count + i}" for i in range(len(documents))]
 
         self.collection.add(
             embeddings=embeddings,
@@ -87,24 +179,41 @@ class KnowledgeBase:
         )
 
     def search(self, query, n_results=5):
-        """Search for relevant knowledge given a query.
-
-        Args:
-            query: natural language query string
-            n_results: number of results to return
-
-        Returns:
-            list of dicts with 'content', 'metadata', 'distance'
-        """
-        if self.collection is None or self.embedder is None:
+        if self.embedder is None:
             self.initialize()
-        if self.collection is None or self.embedder is None:
+        if self.embedder is None:
             return self._fallback_search(query, n_results)
 
-        query_embedding = self.embedder.encode([query], show_progress_bar=False).tolist()
+        # TF-IDF mode: compute similarity manually
+        if self._embedder_source == 'tfidf':
+            if not hasattr(self, '_tfidf_docs') or not self._tfidf_docs:
+                return self._fallback_search(query, n_results)
+            q_vec = np.array(self.embedder.encode([query])[0])
+            doc_vecs = np.array(self.embedder.encode(self._tfidf_docs))
+            # Cosine similarity
+            q_norm = np.linalg.norm(q_vec) + 1e-10
+            d_norms = np.linalg.norm(doc_vecs, axis=1) + 1e-10
+            sims = np.dot(doc_vecs, q_vec) / (d_norms * q_norm)
+            top_k = np.argsort(sims)[::-1][:n_results]
+            return [
+                {
+                    'content': self._tfidf_docs[i],
+                    'metadata': self._tfidf_metas[i],
+                    'distance': float(1 - sims[i]),
+                }
+                for i in top_k if sims[i] > 0.01
+            ]
+
+        # ChromaDB mode
+        if self.collection is None:
+            return self._fallback_search(query, n_results)
+
+        q_vec = self.embedder.encode([query], show_progress_bar=False)
+        if hasattr(q_vec, 'tolist'):
+            q_vec = q_vec.tolist()
 
         results = self.collection.query(
-            query_embeddings=query_embedding,
+            query_embeddings=q_vec,
             n_results=n_results,
         )
 
