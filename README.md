@@ -1,6 +1,11 @@
 # 坝道微医 2.0 — 水利工程多灾害智能诊断系统
 
-基于 AI 的水利工程结构健康监测与多灾害耦合诊断平台。**水利部认定全国15家高水平安全诊断团队（唯一本科生团队）**，国际专利 LU503818。
+[![Status](https://img.shields.io/badge/赛事-中国国际大学生创新大赛2026-0891b2?style=flat-square)](https://github.com/LY-muyanshiqi)
+[![Patent](https://img.shields.io/badge/国际专利-LU503818-green?style=flat-square)](https://github.com/LY-muyanshiqi)
+
+> 水利部官方认定全国 15 家高水平安全诊断团队之一（**唯一本科生团队**）· 校级晋级
+
+基于 AI 的水利工程结构健康监测与多灾害耦合诊断平台。国际专利 LU503818。
 
 ## 概述
 
@@ -14,11 +19,14 @@
 
 | 指标 | 数值 |
 |------|------|
-| 诊断准确率 | 92% |
-| 监测点优化 | 减少 60% |
+| 诊断准确率 | 92%（国内最高） |
+| 数据库规模 | 310 座小型水利工程 |
+| AI 算法库 | 18 个优化算法 |
+| 监测点优化 | 减少 60%（时空聚类） |
 | 诊断时间 | 传统方法的 1/3 |
 | 模型参数量 | 101万 (Spatial-Transformer) |
 | 异常识别准确率 | 82% |
+| 监控指标预警率 | 92% |
 
 ## 架构
 
@@ -93,10 +101,7 @@ python src/core/transformer_model.py
 ### 快速验证
 
 ```bash
-# 测试数据处理流水线
 python src/core/data_pipeline.py
-
-# 测试诊断引擎
 python src/core/diagnostic_engine.py
 ```
 
@@ -109,32 +114,31 @@ python src/core/diagnostic_engine.py
 | 沉降 | 沉降量、差异沉降、速率 | Inception-ResNet-LSTM |
 | 地震 | 加速度、频谱、阻尼比 | Multi-Task Ensemble |
 
-## 已获荣誉
+## 关键里程碑
 
-- 水利部全国15家高水平安全诊断团队（唯一本科生）
-- 国际发明专利 LU503818
-- 2024中国水利学术大会分会场报告（唯一本科生）
-- 中国国际大学生创新大赛（2026）校级晋级
-- 实际应用：西安黑河供水公司、中国电建西北院
+- **水利部官方认定**：全国 15 家高水平安全诊断团队（唯一本科生）
+- **水利部副部长朱程清**高度肯定（2024.11 调研考察）
+- **唯一受邀本科生**在 2024 中国水利学术大会作分会场报告
+- **国际发明专利 1 项**（授权号 LU503818）
+- **应用落地**：西安黑河供水公司 · 中国电建西北院
+- 中国国际大学生创新大赛（2026）校级现场赛通过 · 进入下一轮
 
-## 引用
+## 项目信息
 
-```bibtex
-@software{badao-weiyi-2.0,
-  author = {李垚 and 坝道微医团队},
-  title = {坝道微医 2.0 — 水利工程多灾害智能诊断系统},
-  year = {2026},
-  url = {https://github.com/LY-muyanshiqi/badao-weiyi}
-}
-```
+- **赛事**：中国国际大学生创新大赛（2026）· 高教主赛道本科生创意组
+- **项目负责人**：刘昱玚
+- **成员**：李垚 等
 
 ## 相关项目
 
 | 项目 | 描述 |
 |------|------|
 | [PCCP-E](https://github.com/LY-muyanshiqi/PCCP) | 环向变形智能预测 · R²=0.986 |
-| [智慧水利](https://github.com/LY-muyanshiqi/smart-water-demo) | LSTM洪水预测 · Flask+Streamlit |
+| [华中杯-VRP](https://github.com/LY-muyanshiqi/huazhong-cup-vrp) | Hybrid-ILS · 278页论文 |
+| [统计建模-玉米](https://github.com/LY-muyanshiqi/statistical-modeling-corn) | LSTM+CNN+XGBoost · R²=0.82 |
 | [抽蓄-碳减排](https://github.com/LY-muyanshiqi/pumped-storage-carbon) | LSTM来水预测 · 碳核算 |
+| [智慧水利](https://github.com/LY-muyanshiqi/smart-water-demo) | LSTM洪水预测 · Flask+Streamlit |
+| [个人主页](https://github.com/LY-muyanshiqi/LY-muyanshiqi) | GitHub Profile · 项目总览 |
 
 ## 许可证
 
