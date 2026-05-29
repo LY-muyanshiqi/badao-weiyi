@@ -39,3 +39,4 @@ Thumbs.db
 # Environment
 .env
 .env.local
+data/knowledge_base/chroma.sqlite3
