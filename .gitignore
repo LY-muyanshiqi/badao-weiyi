@@ -25,6 +25,7 @@ env/
 # Models & data (large files)
 outputs/models/*.pth
 outputs/models/*.pkl
+outputs/models/*.pt
 data/*.xlsx
 data/*.csv
 data/*.npz

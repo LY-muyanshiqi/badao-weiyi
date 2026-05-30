@@ -11,6 +11,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+PROJECT_ROOT = Path(__file__).parent.parent
+MODEL_DIR = PROJECT_ROOT / 'outputs' / 'models'
+MODEL_PATH = MODEL_DIR / 'best_model.pth'
+SCALER_PATH = MODEL_DIR / 'scaler.pkl'
+
 st.set_page_config(
     page_title="坝道微医 2.0 — 水利工程智能诊断",
     page_icon="🏗️",
@@ -57,6 +62,14 @@ with st.sidebar:
     pred_horizon = st.slider("预测范围", 5, 30, 10)
 
     st.divider()
+
+    # Model status
+    if MODEL_PATH.exists() and SCALER_PATH.exists():
+        st.success("已加载训练模型 (MultiTaskDiagnosticModel)")
+    else:
+        st.warning("未找到训练模型，使用规则诊断")
+
+    st.divider()
     run_diagnosis = st.button("开始诊断", type="primary", use_container_width=True)
 
 
@@ -78,40 +91,46 @@ results_tab1, results_tab2, results_tab3 = st.tabs([
 
 
 def generate_demo_data():
-    """Generate demo sensor data."""
+    """Generate demo sensor data using physics-based dam simulator (9 channels)."""
+    from src.core.data_generator import generate_base_state, apply_seepage_damage
+
     rng = np.random.RandomState(int(time.time() / 10))
-    n_positions = 360
-    positions = np.linspace(0, 360, n_positions)
-    n_features = n_sensors
+    positions, base_data = generate_base_state(rng)
 
-    strain_base = 100 + 15 * np.sin(positions * np.pi / 180)
-    damage_zone = np.ones(n_positions)
-    center = rng.uniform(120, 240)
-    sigma = rng.uniform(25, 60)
-    severity = rng.uniform(0.15, 0.55)
-    damage_zone = 1 - severity * np.exp(-((positions - center) ** 2) / (2 * sigma ** 2))
+    # Apply random damage for demo variety
+    severity = rng.choice([0, 1, 1, 2, 2, 3])  # weighted toward mild-moderate
+    if severity > 0:
+        hazard_appliers = [
+            apply_seepage_damage,
+            lambda d, s, r, c: d,  # deformation — skip for simpler demo
+            lambda d, s, r, c: d,  # settlement — skip
+            lambda d, s, r, c: d,  # seismic — skip
+        ]
+        h_type = rng.choice(len(hazard_appliers))
+        apply_fn = hazard_appliers[h_type]
+        if apply_fn is not None:
+            center = rng.uniform(60, 300)
+            sensor_data = apply_fn(base_data.copy(), severity, rng, center)
+        else:
+            sensor_data = base_data
+    else:
+        sensor_data = base_data
 
-    sensor_matrix = np.zeros((n_positions, n_features))
-    for i in range(n_features):
-        noise = rng.randn(n_positions) * 2
-        sensor_matrix[:, i] = strain_base + noise + (i * 3) * damage_zone
-
-    return positions, sensor_matrix
+    return positions, sensor_data
 
 
 def run_diagnostic_pipeline(positions, sensor_data):
-    """Run the full diagnostic pipeline."""
-    from src.core.data_pipeline import build_sliding_windows
+    """Run the full diagnostic pipeline with trained model inference."""
     from src.core.diagnostic_engine import DiagnosticEngine
     from src.knowledge_base.embeddings import StandardKnowledgeBase, generate_diagnosis_report
 
-    # Build data windows
-    X, y, meta = build_sliding_windows(sensor_data, positions, seq_length, pred_horizon)
+    # Initialize diagnostic engine with trained model
+    engine = DiagnosticEngine(
+        model_path=str(MODEL_PATH) if MODEL_PATH.exists() else None,
+        scaler_path=str(SCALER_PATH) if SCALER_PATH.exists() else None,
+    )
 
-    # Initialize diagnostic engine
-    engine = DiagnosticEngine()
-
-    # Run diagnosis
+    # Run diagnosis (handles window building internally)
     results = engine.diagnose(sensor_data, positions)
 
     # Optimize sensor placement
@@ -125,7 +144,7 @@ def run_diagnostic_pipeline(positions, sensor_data):
         pass
     report = generate_diagnosis_report(results, kb)
 
-    return results, report, opt_results, meta
+    return results, report, opt_results
 
 
 if run_diagnosis:
@@ -148,7 +167,7 @@ if run_diagnosis:
             st.info("实时监测模式已启动，等待数据...")
             positions, sensor_data = generate_demo_data()
 
-        results, report, opt_results, meta = run_diagnostic_pipeline(positions, sensor_data)
+        results, report, opt_results = run_diagnostic_pipeline(positions, sensor_data)
 
         # Update status display
         risk_colors = {'安全': '#4caf50', '注意': '#ff9800', '警告': '#f44336', '危险': '#b71c1c'}
