@@ -137,16 +137,28 @@ def main():
     parser.add_argument('--pred-horizon', type=int, default=10)
     parser.add_argument('--patience', type=int, default=10)
     parser.add_argument('--quick', action='store_true', help='Fast test run with fewer samples')
+    parser.add_argument('--profile', type=str, default='xiaowan',
+                        choices=['xiaowan', 'goupitan', 'pineflat_gravity'],
+                        help='Dam profile for physics calibration')
     args = parser.parse_args()
 
     if args.quick:
         args.n_samples = 130
         args.epochs = 5
 
+    # Set dam profile before data generation
+    import src.core.data_generator as dg
+    dg.ACTIVE_PROFILE = args.profile
+    profile = dg._get_profile()
+    bl = dg._baseline_params()
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
-    print(f"Config: epochs={args.epochs}, batch={args.batch_size}, "
-          f"lr={args.lr}, samples={args.n_samples}")
+    print(f"Dam Profile: {profile['name']} | H={profile['height_m']}m L={profile['crest_length_m']}m")
+    print(f"  E={profile['elastic_modulus_gpa']}GPa rho={profile['density_kgm3']} nu={profile['poisson_ratio']}")
+    print(f"  Baseline: strain={bl['strain']:.1f}ue PP={bl['pore_pressure']:.1f}kPa "
+          f"disp={bl['displacement']:.2f}mm")
+    print(f"Config: epochs={args.epochs}, batch={args.batch_size}, lr={args.lr}, samples={args.n_samples}")
 
     # Build data
     datasets, scaler = build_datasets(

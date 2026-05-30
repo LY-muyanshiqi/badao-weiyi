@@ -1,41 +1,179 @@
 """
 Physics-based multi-hazard dam monitoring data generator.
 
+数据源标定：
+  - 小湾拱坝 (Xiaowan): 292m, 935m弧长, 12m/73m 顶/底厚, E=21GPa
+    来源: NCDC 国家冰川冻土沙漠科学数据中心 (https://www.ncdc.ac.cn)
+    数据集: "小湾拱坝坝踵竖向应力2017年后计算值与监测值对比"
+    数据集: "小湾拱坝应力场重构计算结果"
+  - 构皮滩拱坝 (Goupitan): 232.5m, 抛物线型拱圈, E=36.9-44.5GPa
+    来源: NCDC 数据集 "构皮滩拱坝放空安全控制指标体系原始数据集"
+    文献: 构皮滩水电站拱坝设计 (中国大坝协会2012学术年会)
+  - ICOLD Benchmark: Pine Flat 混凝土重力坝 (122m, 561m坝顶长)
+    来源: 15th ICOLD International Benchmark Workshop (Milan, 2019)
+    Proceedings: Numerical Analysis of Dams, Springer, 2021
+
 Generates realistic 9-channel sensor data for arch dam health monitoring
 with 4 hazard types (seepage, deformation, settlement, seismic) and 4 severity
 levels each, grounded in structural mechanics first principles.
 
 Sensor channels (9-D feature vector):
-  0-2: Distributed fiber optic strain      [με]   — 3 spatial zones
+  0-2: Distributed fiber optic strain      [ue]   — 3 spatial zones
   3-4: Piezometer pore pressure            [kPa]  — upstream/downstream
   5-6: Displacement meters                 [mm]   — radial/tangential
   7:   Settlement gauge                    [mm]   — vertical
-  8:   Accelerometer                       [gal]  — seismic (1 gal ≈ 1 cm/s²)
+  8:   Accelerometer                       [gal]  — seismic (1 gal = 1 cm/s2)
 
 Hazard physics:
-  Seepage:     pore pressure ↑↑, strain ↓ (effective stress loss), displacement ↑
-  Deformation: strain ↓↓ localized (relaxation zone), displacement ↑↑
-  Settlement:  settlement ↑↑ (differential), strain dipole pattern
-  Seismic:     acceleration ↑↑↑ transient, all channels oscillatory
+  Seepage:     pore pressure UP, strain DOWN (effective stress loss), displacement UP
+  Deformation: strain DOWN localized (relaxation zone), displacement UP
+  Settlement:  settlement UP (differential), strain dipole pattern
+  Seismic:     acceleration UP transient, all channels oscillatory
 """
 import numpy as np
 from pathlib import Path
 
 
-# ── Physical constants for an arch dam (拱坝) ──
-DAM_HEIGHT = 80.0          # m — typical medium arch dam
-DAM_CREST_LENGTH = 360.0   # m — crest arc length
-N_POSITIONS = 360          # 1° resolution along crest
+# ── Arch dam profile presets (calibrated from real-world data) ──
+# Each preset captures geometry, material, and operational parameters
+# of a real-world arch dam, used to scale the physics simulation.
+
+DAM_PROFILES = {
+    'xiaowan': {   # Xiaowan: world's 2nd highest arch dam, Lancang River, Yunnan
+        'name': 'Xiaowan Arch Dam (292m)',
+        'height_m': 292.0,
+        'crest_length_m': 935.0,
+        'crest_thickness_m': 12.0,
+        'base_thickness_m': 73.0,
+        'elastic_modulus_gpa': 21.0,
+        'density_kgm3': 2400,
+        'poisson_ratio': 0.189,
+        'normal_pool_m': 1240.0,    # 正常蓄水位高程
+        'low_pool_m': 1181.0,       # 低水位高程
+        'design_pga_g': 0.308,      # 设计地震加速度 (IX度)
+        'valley_shape': 'V',        # V valley, 40-42 deg bank slope
+        'source': 'NCDC · 国家冰川冻土沙漠科学数据中心',
+        'dataset_ids': [
+            '8236cd76-671e-4a4a-9837-9551dc108dd6',  # 小湾坝踵应力
+            '4f568cca-94ee-45d1-be4c-ced00c6e6d06',  # 小湾应力场重构
+        ],
+    },
+    'goupitan': {  # Goupitan Arch Dam, Wujiang River, Guizhou
+        'name': 'Goupitan Arch Dam (232.5m)',
+        'height_m': 232.5,
+        'crest_length_m': 560.0,     # estimated from arch description
+        'crest_thickness_m': 10.25,
+        'base_thickness_m': 50.28,
+        'elastic_modulus_gpa': 38.0,  # 28d 中值 (36.9-40.0)
+        'density_kgm3': 2400,
+        'poisson_ratio': 0.167,
+        'normal_pool_m': 630.0,
+        'low_pool_m': 585.0,
+        'design_pga_g': 0.10,        # VI度设防
+        'valley_shape': 'V',
+        'max_central_angle_deg': 88.07,
+        'source': 'NCDC · 国家冰川冻土沙漠科学数据中心',
+        'dataset_ids': [
+            '89b27f1a-2cf1-4f3b-b4c4-b6412285ed78',  # 构皮滩放空安全
+        ],
+    },
+    'pineflat_gravity': {  # Pine Flat | ICOLD Benchmark | Concrete Gravity Dam
+        'name': 'Pine Flat Gravity Dam (ICOLD Benchmark)',
+        'height_m': 122.0,            # 400 ft
+        'crest_length_m': 561.0,      # 1,840 ft
+        'crest_thickness_m': 9.8,     # 32 ft
+        'base_thickness_m': 97.5,     # ~320 ft
+        'elastic_modulus_gpa': 22.4,
+        'density_kgm3': 2483,
+        'poisson_ratio': 0.20,
+        'normal_pool_m': 290.0,
+        'low_pool_m': 260.0,
+        'design_pga_g': 0.20,
+        'valley_shape': 'U',          # wide U valley
+        'dam_type': 'gravity',        # gravity dam (not arch)
+        'source': '15th ICOLD International Benchmark Workshop (Milan, 2019)',
+        'reference': 'Bolzon, G. et al. (2021) Numerical Analysis of Dams. Springer.',
+    },
+}
+
+# Default active profile
+ACTIVE_PROFILE = 'xiaowan'
+
+# ── Physical constants derived from active profile ──
+def _get_profile():
+    return DAM_PROFILES[ACTIVE_PROFILE]
+
+
+def _dam_height():
+    return _get_profile()['height_m']
+
+
+def _crest_length():
+    return _get_profile()['crest_length_m']
+
+
+def _elastic_modulus_pa():
+    """Elastic modulus in Pa."""
+    return _get_profile()['elastic_modulus_gpa'] * 1e9
+
+
+# Spatial resolution
+N_POSITIONS = 360          # 1 degree resolution along crest (scales with profile)
 N_FEATURES = 9
 
-# Baseline sensor values at normal state
+
+def _baseline_params():
+    """Compute baseline sensor values from dam profile physics.
+
+    Strain = sigma/E where sigma ~ rho*g*h at dam/3 for arch action
+    Pore pressure ~ gamma_water*h at monitoring depth
+    Displacement ~ (F*L^3)/(3*E*I) for simplified arch beam
+    """
+    profile = _get_profile()
+    H = profile['height_m']
+    E = profile['elastic_modulus_gpa'] * 1e9  # Pa
+    rho_c = profile['density_kgm3']           # kg/m3
+    rho_w = 1000.0                             # water density kg/m3
+    h_water = H * 0.85                         # approximate water head at monitoring points
+
+    # Hydrostatic stress ~ rho*g*h at 1/3 height (approximate arch ring)
+    sigma_hydrostatic = rho_w * 9.81 * h_water  # Pa
+    # Strain: sigma/E * 1e6 [microstrain]
+    strain_baseline = (sigma_hydrostatic / E) * 1e6
+
+    # Pore pressure: uplift at monitoring points [kN/m2 = kPa]
+    pore_pressure_baseline = rho_w * 9.81 * h_water * 0.3 / 1000  # kPa (30% uplift)
+
+    # Displacement: simplified arch deflection
+    # delta ~ (w*L^4)/(384*E*I) scaled
+    L = profile['crest_length_m']
+    I_equiv = (profile['base_thickness_m'] ** 4) / 12  # approximate per meter
+    w = rho_w * 9.81 * h_water * 1.0  # load per meter
+    displacement_baseline = (w * L**4) / (384 * E * I_equiv) * 1000  # mm
+
+    # Clamp to physically reasonable ranges
+    strain_baseline = max(strain_baseline, 50.0)
+    pore_pressure_baseline = max(pore_pressure_baseline, 30.0)
+    displacement_baseline = max(displacement_baseline, 0.5)
+
+    return {
+        'strain':       strain_baseline,
+        'pore_pressure': pore_pressure_baseline,
+        'displacement':  displacement_baseline,
+        'settlement':    max(0.2, displacement_baseline * 0.05),  # small in normal state
+        'acceleration':  0.5,  # ambient microtremor [gal]
+    }
+
+
+# Legacy BASELINE for backward compat; updated on first generate_base_state call
 BASELINE = {
-    'strain':       120.0,   # με — typical working strain in concrete arch dam
-    'pore_pressure': 80.0,   # kPa — normal uplift pressure at monitoring points
-    'displacement':   3.0,   # mm — normal radial displacement under hydrostatic load
-    'settlement':     0.5,   # mm — negligible settlement in normal operation
-    'acceleration':   0.5,   # gal — ambient microtremor
+    'strain':       120.0,
+    'pore_pressure': 80.0,
+    'displacement':   3.0,
+    'settlement':     0.5,
+    'acceleration':   0.5,
 }
+
 
 # Hazard-specific amplitude ranges by severity [normal, mild, moderate, severe]
 SEVERITY_AMPLITUDE = {
@@ -66,7 +204,7 @@ def _gkern(width_deg, center_deg=None, n=N_POSITIONS):
     if center_deg is None:
         center_deg = N_POSITIONS / 2
     x = np.arange(n)
-    sigma = width_deg / 2.355  # FWHM → sigma
+    sigma = width_deg / 2.355  # FWHM -> sigma
     if sigma < 0.5:
         sigma = 0.5
     kernel = np.exp(-0.5 * ((x - center_deg) / sigma) ** 2)
@@ -86,39 +224,52 @@ def generate_base_state(rng=None):
 
     Physics: sinusoidal variation along crest — maximum at crown (center),
     minimum at abutments (edges), reflecting arch action.
+
+    Baseline values are derived from the active DAM_PROFILE (Xiaowan by default)
+    using hydrostatic stress, arch deflection, and uplift pressure calculations.
     """
+    profile = _get_profile()
+    H = profile['height_m']
+    L = profile['crest_length_m']
+
+    # Calibrate baselines from profile physics
+    bl = _baseline_params()
+    # Update global BASELINE for backward compat
+    for k, v in bl.items():
+        BASELINE[k] = v
+
     rng = rng or np.random.RandomState()
-    positions = np.linspace(0, DAM_CREST_LENGTH, N_POSITIONS)
-    theta = positions / DAM_CREST_LENGTH * np.pi  # normalized arch angle
+    positions = np.linspace(0, L, N_POSITIONS)
+    theta = positions / L * np.pi  # normalized arch angle [0, π]
 
     # Arch action: higher loading at crown (center), lower at abutments
-    arch_profile = 0.7 + 0.3 * np.sin(theta)  # [0.7, 1.0]
+    arch_profile = 0.7 + 0.3 * np.sin(theta)  # [0.7, 1.0] — crowned at midspan
 
     data = np.zeros((N_POSITIONS, N_FEATURES))
 
     # Channels 0-2: Strain (3 spatial zones — left abutment, crown, right abutment)
     for i, center in enumerate([N_POSITIONS * 0.25, N_POSITIONS * 0.5, N_POSITIONS * 0.75]):
         zone_profile = 1.0 + 0.15 * np.sin(theta - np.pi * (center / N_POSITIONS - 0.5))
-        data[:, i] = BASELINE['strain'] * arch_profile * zone_profile
-        data[:, i] += _smooth_noise(rng, N_POSITIONS, scale=2.0, smoothness=5)
+        data[:, i] = bl['strain'] * arch_profile * zone_profile
+        data[:, i] += _smooth_noise(rng, N_POSITIONS, scale=bl['strain'] * 0.02, smoothness=5)
 
     # Channels 3-4: Pore pressure (upstream/downstream)
-    data[:, 3] = BASELINE['pore_pressure'] * arch_profile  # upstream — higher
-    data[:, 3] += _smooth_noise(rng, N_POSITIONS, scale=3.0, smoothness=8)
-    data[:, 4] = BASELINE['pore_pressure'] * 0.6 * arch_profile  # downstream — lower
-    data[:, 4] += _smooth_noise(rng, N_POSITIONS, scale=2.0, smoothness=8)
+    data[:, 3] = bl['pore_pressure'] * arch_profile  # upstream — higher
+    data[:, 3] += _smooth_noise(rng, N_POSITIONS, scale=bl['pore_pressure'] * 0.04, smoothness=8)
+    data[:, 4] = bl['pore_pressure'] * 0.6 * arch_profile  # downstream — lower
+    data[:, 4] += _smooth_noise(rng, N_POSITIONS, scale=bl['pore_pressure'] * 0.03, smoothness=8)
 
     # Channels 5-6: Displacement (radial, tangential)
-    data[:, 5] = BASELINE['displacement'] * arch_profile  # radial — follows arch load
-    data[:, 5] += _smooth_noise(rng, N_POSITIONS, scale=0.3, smoothness=6)
-    data[:, 6] = BASELINE['displacement'] * 0.3  # tangential — small in symmetric loading
-    data[:, 6] += _smooth_noise(rng, N_POSITIONS, scale=0.2, smoothness=6)
+    data[:, 5] = bl['displacement'] * arch_profile  # radial — follows arch load
+    data[:, 5] += _smooth_noise(rng, N_POSITIONS, scale=bl['displacement'] * 0.1, smoothness=6)
+    data[:, 6] = bl['displacement'] * 0.3  # tangential — small in symmetric loading
+    data[:, 6] += _smooth_noise(rng, N_POSITIONS, scale=bl['displacement'] * 0.07, smoothness=6)
 
     # Channel 7: Settlement (near zero in normal state)
-    data[:, 7] = BASELINE['settlement'] + _smooth_noise(rng, N_POSITIONS, scale=0.1, smoothness=10)
+    data[:, 7] = bl['settlement'] + _smooth_noise(rng, N_POSITIONS, scale=bl['settlement'] * 0.2, smoothness=10)
 
     # Channel 8: Acceleration (ambient microtremor)
-    data[:, 8] = BASELINE['acceleration'] + rng.randn(N_POSITIONS) * 0.2
+    data[:, 8] = bl['acceleration'] + rng.randn(N_POSITIONS) * 0.2
 
     return positions, data
 
@@ -264,7 +415,7 @@ def generate_multi_hazard_dataset(n_samples=2000, seed=42):
         damage_spans: np.array [n_samples] — damage zone width in degrees
     """
     rng = np.random.RandomState(seed)
-    positions = np.linspace(0, DAM_CREST_LENGTH, N_POSITIONS)
+    positions = np.linspace(0, _get_profile()['crest_length_m'], N_POSITIONS)
 
     data_list = []
     hazard_list = []
@@ -379,9 +530,26 @@ def generate_sliding_window_dataset(positions, full_data, hazard_labels, severit
 
 
 if __name__ == '__main__':
+    profile = _get_profile()
+    bl = _baseline_params()
+    print(f"Active profile: {profile['name']}")
+    print(f"  Height: {profile['height_m']}m | Crest: {profile['crest_length_m']}m")
+    print(f"  E = {profile['elastic_modulus_gpa']} GPa | rho = {profile['density_kgm3']} kg/m3 | nu = {profile['poisson_ratio']}")
+    print(f"  Source: {profile['source']}")
+    print(f"  Computed baselines: strain={bl['strain']:.1f} ue, PP={bl['pore_pressure']:.1f} kPa, "
+          f"disp={bl['displacement']:.2f} mm, sett={bl['settlement']:.2f} mm, acc={bl['acceleration']:.1f} gal")
+    print()
+
     positions, data, h_labels, s_labels, spans = generate_multi_hazard_dataset(n_samples=1300)
     print(f"Dataset: {data.shape}, hazards={h_labels.shape}, severities={s_labels.shape}")
+    print(f"Physical range check -- strain: [{data[:,:,0].min():.0f}, {data[:,:,0].max():.0f}] ue")
 
     X, ys, yh, ysev, ysp = generate_sliding_window_dataset(
         positions, data, h_labels, s_labels, spans
     )
+    print()
+    print("Available profiles:")
+    for k, p in DAM_PROFILES.items():
+        print(f"  {k}: {p['name']} -- {p['height_m']}m -- {p['source']}")
+    print()
+    print("Tip: Set ACTIVE_PROFILE to switch dam type.")
